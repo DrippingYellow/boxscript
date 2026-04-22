@@ -1,5 +1,5 @@
 ﻿--#######################################--
---   boxscript v1.0 by DrippingYellow    --
+--   boxscript v1.1 by DrippingYellow    --
 --                                       --
 --  A hitbox viewer for Joy Mech Fight.  --
 --#######################################--
@@ -31,51 +31,83 @@ local highJumpRangeAddress = 0x94B3
 -- Hover's address - range to transition from high jump to meteor shot
 local meteorShotRangeAddress = 0x9B6B
 
-local hitboxSizeStrings = {"Off","9x9","5x5","3x3","1x1"}
-	local onOffStrings = {"Off","On"}
+local hitboxSizeStrings = {"Off","16x16","10x10","6x6","4x4","1x1"}
+local onOffStrings = {"Off","On"}
+
+local fighterID = {0, 0}
+local fighterXPos = {0, 0}
+local fighterYPos = {0, 0}
+local fighterInvincible = {0, 0}
+
+local airGrabCharacters = {0x4, 0x24}
+local isAirGrabCharacter = {false, false}
+
+local kickGrabCharacters = {0x4, 0x24, 0x80}
+local kickGrabCharacter = {false, false}
 
 
+local function isInTable(ID, charTable)
+	for i = 1, #charTable, 1 do
+		if (ID == charTable[i]) then
+			return true
+		end
+	end
+
+	return false
+end
 
 local function checkCharGrab(player, distance)
-	local fighterStruct = (player*0x100) + 0x500
+	local oppInvincible = fighterInvincible[player ~ 3]
+	
+	if (oppInvincible == 1) then
+		return false
+	end
+	
+	local fighterStruct = ((player-1)*0x100) + 0x500
 	local oppStruct = fighterStruct ~ 0x300 -- bitwise XOR that converts between P1 and P2 addresses
 	
-	local fighterID = emu.read(fighterStruct+0x3F, emu.memType.nesMemory, false)
 	local fighterState = emu.read(fighterStruct+0x1C, emu.memType.nesMemory, false)
 	
-	local fighterIsAirborne = emu.read(fighterStruct+0x1F, emu.memType.nesMemory, false)
-	local oppIsAirborne = emu.read(oppStruct+0x1F, emu.memType.nesMemory, false)
+	local fighterIsAirborne = emu.read(fighterStruct+0x1F, emu.memType.nesMemory, false) == 1
+	local oppIsAirborne = emu.read(oppStruct+0x1F, emu.memType.nesMemory, false) == 1
 
 	local grabRange
-	
+
 -- If both fighters aren't airborne and the user's state is a grounded, non-attacking one.
-	if (not (fighterIsAirborne == 1 or oppIsAirborne == 1) and fighterState < 3) then
-		if (fighterID >= 0x80) then
-			grabRange = gelJohnGrabRangeAddresses[(fighterID % 0x80) + 1]
+	if ((not fighterIsAirborne and not oppIsAirborne) and fighterState < 3) then
+		if (fighterID[player] >= 0x80) then
+			grabRange = gelJohnGrabRangeAddresses[(fighterID[player] % 0x80) + 1]
 		else
-			grabRange = grabRangeAddresses[fighterID + 1]
+			grabRange = grabRangeAddresses[fighterID[player] + 1]
 		end
 -- If playing as a ninja and both fighters are airborne and the user is in a jumping state.
-	elseif ((fighterID == 0x4 or fighterID == 0x24) and
-		    fighterIsAirborne == 1 and oppIsAirborne == 1 and fighterState == 3) then
+	elseif (isAirGrabCharacter[player] == true) then
+	
+		if ((not fighterIsAirborne or not oppIsAirborne) or fighterState ~= 3) then
+			return false
+		end
 		
-		local fighterXPos = emu.read(fighterStruct+0x8, emu.memType.nesMemory, false)
-		local fighterYPos = emu.read(fighterStruct+0x9, emu.memType.nesMemory, false)
-		local oppXPos = emu.read(oppStruct+0x8, emu.memType.nesMemory, false)
-		
+		local oppXPos = fighterXPos[player ~ 3]
+		local oppYPos = fighterYPos[player ~ 3]
+			
 		local fighterDirection = emu.read(fighterStruct+0x1E, emu.memType.nesMemory, false)
+		
 -- Opponent must be in front of the user.
 		if (fighterDirection == 1) then
-			if (oppXPos >= fighterXPos) then
+			if (oppXPos >= fighterXPos[player]) then
 				return false
 			end
 		else
-			if (oppXPos < fighterXPos) then
+			if (oppXPos < fighterXPos[player]) then
 				return false
 			end
 		end
+-- Check for vertical distance.
+		if (math.abs(fighterYPos[player] - oppYPos) >= 0x40) then
+			return false
+		end
 -- User must be high up enough to use it.
-		if (fighterYPos >= 0x40) then
+		if (fighterYPos[player] >= 0x40) then
 			return false
 		end
 		
@@ -111,9 +143,9 @@ local function checkBackBlock(distance, isProjectile)
 end
 
 local function displayHitboxes(player)
-	local fighterStruct = (player*0x100) + 0x500
+	local fighterStruct = ((player-1)*0x100) + 0x500
 	
-	local hitboxSizes = {9, 5, 3, 0}
+	local hitboxSizes = {8, 5, 3, 2, 0}
 	local currentHitboxSize = hitboxSizes[viewHitboxes]
 	
 	for i = 0, 12, 1
@@ -122,7 +154,8 @@ local function displayHitboxes(player)
 		if x ~= 0 then 
 			local y = emu.read(fighterStruct+0xC1+(i*2), emu.memType.nesMemory, false)
 			if (currentHitboxSize == 0) then
-				emu.drawRectangle(x, y, 1, 1, 0x3FFF0000, true)
+				emu.drawRectangle(x-1, y-1, 3, 3, 0x3F7F0000, true)
+				emu.drawRectangle(x, y, 1, 1, 0xFF0000, true)
 			else
 				emu.drawRectangle(x-currentHitboxSize, y-currentHitboxSize, currentHitboxSize*2, currentHitboxSize*2, 0x3FFF0000, true)
 			end
@@ -132,19 +165,19 @@ local function displayHitboxes(player)
 end
 
 local function displayCollisionBox(player)
-	local fighterStruct = (player*0x100) + 0x500
+
 	local collisionBoxSize = 24
-	local bodyX = emu.read(fighterStruct+0x8, emu.memType.nesMemory, false)
-	local bodyY = emu.read(fighterStruct+0x9, emu.memType.nesMemory, false)
+	local bodyX = fighterXPos[player]
+	local bodyY = fighterYPos[player]
 	
 	emu.drawRectangle(bodyX-(collisionBoxSize//2), bodyY-(collisionBoxSize//2), collisionBoxSize, collisionBoxSize, 0x3F3F3F3F, true)
 end
 
 local function displayHurtbox(player)
-	local fighterStruct = (player*0x100) + 0x500
+	local fighterStruct = ((player-1)*0x100) + 0x500
 	
-	local hurtboxHeights = {16, 8, 4, 1}
-	local hurtboxWidths = {20, 28, 32, 37}
+	local hurtboxHeights = {13, 8, 4, 2, 1}
+	local hurtboxWidths = {22, 28, 32, 34, 37}
 	
 	local hurtboxColor = 0x3F0000FF
 
@@ -152,14 +185,13 @@ local function displayHurtbox(player)
 	local currentHurtboxHeight = hurtboxHeights[viewHitboxes]
 	
 	local bodyPartsGone = emu.read(fighterStruct+0x25, emu.memType.nesMemory, false)
-	local invincible = emu.read(fighterStruct+0x27, emu.memType.nesMemory, false)
 	
-	if (invincible == 1) then hurtboxColor = 0x3FFF00FF end
+	if (fighterInvincible[player] == 1) then hurtboxColor = 0x3FFF00FF end
 	
-	local bodyX = emu.read(fighterStruct+0x8, emu.memType.nesMemory, false)
+	local bodyX = fighterXPos[player]
 	
 	local headY = emu.read(fighterStruct+0x7, emu.memType.nesMemory, false)
-	local bodyY = emu.read(fighterStruct+0x9, emu.memType.nesMemory, false)
+	local bodyY = fighterYPos[player]
 	local frontLegY = emu.read(fighterStruct+0x3, emu.memType.nesMemory, false)
 	local backLegY = emu.read(fighterStruct+0xD, emu.memType.nesMemory, false)
 	
@@ -205,11 +237,21 @@ local function displayHurtbox(player)
 		topY = temp
 	end
 	
-	topY = topY + currentHurtboxHeight//2
-	if (currentHurtboxHeight == 1) then
-		bottomY = bottomY - currentHurtboxHeight//2
+	
+	
+	if (currentHurtboxHeight ~= 1) then
+		local hitboxReduction = math.ceil(currentHurtboxHeight/2)
+		topY = topY + hitboxReduction
+		bottomY = (bottomY - 1) - hitboxReduction
+		if (bottomY <= topY) then
+			emu.drawString(bodyX-3, bodyY-4, "?", 0xFFFFFF, 0x3FFF0000)
+			return
+		end
 	else
-		bottomY = bottomY - 1 - currentHurtboxHeight//2
+		if (bottomY < topY) then
+			emu.drawString(bodyX-3, bodyY-4, "?", 0xFFFFFF, 0x3FFF0000)
+			return
+		end
 	end
 	
 	emu.drawRectangle(bodyX-(currentHurtboxWidth//2), topY,
@@ -237,8 +279,6 @@ local function displayFighterDistance()
 	end
 	
 
-	local p1BodyX = emu.read(0x508, emu.memType.nesMemory, false)
-	local p2BodyX = emu.read(0x608, emu.memType.nesMemory, false)
 	local fighterDistance = emu.read(0x74, emu.memType.nesMemory, false)
 	
 	local p1ProjectileX = emu.read(0x539, emu.memType.nesMemory, false)
@@ -247,22 +287,25 @@ local function displayFighterDistance()
 	local lineColor = 0x00BF00
 	local textBackgroundColor = 0x7F000000
 	
-	if (checkCharGrab(0, fighterDistance)) then
+	p1CanGrab = checkCharGrab(1, fighterDistance)
+	p2CanGrab = checkCharGrab(2, fighterDistance)
+	
+	if (p1CanGrab == true) then
 		lineColor = (lineColor | 0xBF0000) & ~0x00FF00
 	end
 	
-	if (checkCharGrab(1, fighterDistance)) then
+	if (p2CanGrab == true) then
 		lineColor = (lineColor | 0x0000BF) & ~0x00FF00
 	end
 	
 	if (checkBackBlock(fighterDistance, false)) then
-		textBackgroundColor = 0x7FFF0000
+		textBackgroundColor = textBackgroundColor | 0xFF0000
 	end
 	
-	drawDistanceLine(p1BodyX, p2BodyX, 0x70, fighterDistance, lineColor, textBackgroundColor)
+	drawDistanceLine(fighterXPos[1], fighterXPos[2], 0x70, fighterDistance, lineColor, textBackgroundColor)
 	
 	if (p2ProjectileX ~= 0) then
-		local p1ProjectileDistance = math.abs(p2ProjectileX - p1BodyX)
+		local p1ProjectileDistance = math.abs(p2ProjectileX - fighterXPos[1])
 		
 		if (checkBackBlock(p1ProjectileDistance, true)) then
 			textBackgroundColor = 0x7FFF0000
@@ -270,11 +313,11 @@ local function displayFighterDistance()
 			textBackgroundColor = 0x7F000000
 		end
 		
-		drawDistanceLine(p1BodyX, p2ProjectileX, 0x90, p1ProjectileDistance, 0x00BF00, textBackgroundColor)
+		drawDistanceLine(fighterXPos[1], p2ProjectileX, 0x90, p1ProjectileDistance, 0x00BF00, textBackgroundColor)
 	end
 	
 	if (p1ProjectileX ~= 0) then
-		local p2ProjectileDistance = math.abs(p1ProjectileX - p2BodyX)
+		local p2ProjectileDistance = math.abs(p1ProjectileX - fighterXPos[2])
 		
 		if (checkBackBlock(p2ProjectileDistance, true)) then
 			textBackgroundColor = 0x7FFF0000
@@ -282,17 +325,29 @@ local function displayFighterDistance()
 			textBackgroundColor = 0x7F000000
 		end
 		
-		drawDistanceLine(p2BodyX, p1ProjectileX, 0xB0, p2ProjectileDistance, 0x00BF00, textBackgroundColor)
+		drawDistanceLine(fighterXPos[2], p1ProjectileX, 0xB0, p2ProjectileDistance, 0x00BF00, textBackgroundColor)
 	end
 		
 end
 
 function Main()
+
+-- Pre-loading important variables so we don't have to keep reading them.
+	for i = 1, 2, 1
+	do
+		local fighterStruct = ((i-1)*0x100) + 0x500
+		fighterID[i] = emu.read(fighterStruct+0x3F, emu.memType.nesMemory, false)
+		fighterXPos[i] = emu.read(fighterStruct+0x8, emu.memType.nesMemory, false)
+		fighterYPos[i] = emu.read(fighterStruct+0x9, emu.memType.nesMemory, false)
+		fighterInvincible[i] = emu.read(fighterStruct+0x27, emu.memType.nesMemory, false)
+		isAirGrabCharacter[i] = isInTable(fighterID[i], airGrabCharacters)
+	end
+	
 	local mouse = emu.getMouseState()
 	
 	if (mouse["left"] == true) then
 		if not holdingMouse then	
-			viewHitboxes = (viewHitboxes + 1) % 5
+			viewHitboxes = (viewHitboxes + 1) % 6
 			holdingMouse = true
 			emu.displayMessage("boxscript", "Hitbox Viewer: "..hitboxSizeStrings[viewHitboxes+1])
 		end
@@ -306,15 +361,15 @@ function Main()
 		holdingMouse = false
 	end
 
-	emu.clearScreen()
+	--emu.clearScreen()
 	
 	if (viewHitboxes ~= 0) then
-		displayHitboxes(0)
-		displayHitboxes(1)
-		displayHurtbox(0)
 		displayHurtbox(1)
-		displayCollisionBox(0)
+		displayHurtbox(2)
 		displayCollisionBox(1)
+		displayCollisionBox(2)
+		displayHitboxes(1)
+		displayHitboxes(2)
 	end
 	
 	if (viewDistances ~= 0) then
